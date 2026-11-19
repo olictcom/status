@@ -1,0 +1,42 @@
+# The independent witness for status.olict.com: every 5 minutes, ask olict.com for its homepage
+# from GitHub's network and keep the answer as the single commit of the `witness` branch.
+# The page reads witness.json from that branch. A run fails when olict.com is down, so GitHub
+# e-mails the repository's owner. GitHub may start scheduled runs late; the page says how old
+# the last check is.
+name: witness
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: witness
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Last result
+        run: |
+          mkdir -p out
+          if git fetch -q --depth=1 origin witness; then git show FETCH_HEAD:witness.json > out/witness.json; else echo '{}' > out/witness.json; fi
+      - name: Check olict.com
+        id: check
+        continue-on-error: true
+        run: node witness/witness.mjs out/witness.json
+      - name: Save
+        env:
+          TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          cd out
+          git init -q -b witness
+          git add witness.json
+          git -c user.name=olict-witness -c user.email=olict-witness@users.noreply.github.com commit -qm "witness $(date -u +%FT%TZ)"
+          git push -qf "https://x-access-token:${TOKEN}@github.com/${REPO}" witness
+      - name: Fail when olict.com is down
+        if: steps.check.outcome == 'failure'
+        run: exit 1
